@@ -1,0 +1,83 @@
+#!/usr/bin/perl -w
+use strict;
+use warnings;
+use Archive::Zip qw( :ERROR_CODES :CONSTANTS );
+use Data::Dumper;
+use File::Spec;
+use Getopt::Std;
+use Cwd;
+
+
+######	Parsing command line options -i and -o
+my %options=();
+getopts("o:i:", \%options);
+my $dir_output=$options{o};
+$dir_output=getcwd() unless defined $dir_output;
+$dir_output = File::Spec->canonpath($dir_output);
+die "Output dir $dir_output is not a directory\t" unless -d$dir_output ;
+my $dir_input;
+die "Error!\nPlease, provide an intput folder (-i)\n" unless defined $options{i};
+$dir_input = File::Spec->canonpath($options{i});
+die "Input dir $dir_input is not a directory\t" unless -d$dir_input ;
+
+
+my %total_report;
+opendir(DH, $dir_input);
+my @files = readdir(DH);
+closedir(DH);
+for(my $i=0;$i<$#files+1;$i++){
+	next unless $files[$i]=~/fastqc\.zip$/;
+	my $complete_path_input = File::Spec->catfile($dir_input,$files[$i]);
+	die "Not a file! \t" unless -f$complete_path_input;
+	my %info=_extrae_info($complete_path_input);
+	$total_report{$files[$i]}=\%info;
+}
+
+my $number_fastqczip_files=scalar keys %total_report;
+print "A total of $number_fastqczip_files fastQC ZIP archives found\n";
+
+my @dirs = File::Spec->splitdir($dir_input);
+die "Error: no directory found!!\n" unless $dirs[-1];
+my $file_output=File::Spec->catfile($dir_output,$dirs[-1]);
+$file_output=$file_output.".txt";
+$file_output = File::Spec->canonpath($file_output);
+
+
+open OUT,">",$dirs[-1].".txt" or die "Can not open output file";
+my @keys_for_modules= (	'Per base sequence quality', 'Per tile sequence quality', 'Per sequence GC content',
+						'Basic Statistics', 'Sequence Duplication Levels', 'Per base N content', 'Kmer Content',
+						'Per base sequence content', 'Per sequence quality scores', 'Adapter Content', 
+						'Sequence Length Distribution', 'Overrepresented sequences');
+print OUT "\t",$_ foreach @keys_for_modules;
+print OUT "\n";
+foreach my $individual_report(sort keys %total_report){
+	print OUT $individual_report,"\t";
+	foreach my $module(@keys_for_modules){
+		$total_report{$individual_report}{$module}?print OUT $total_report{$individual_report}{$module},"\t":print OUT "???\t";
+	}
+	print OUT "\n";
+}
+print "Report generated in $file_output \n";
+
+
+
+sub _extrae_info{
+	my $file=shift;
+	my $zip = Archive::Zip->new();
+	return 0 unless $zip->read($file) == AZ_OK;
+	my @reports = $zip->membersMatching( 'summary.txt' );
+	die "Not a report o more than one report file!\n" unless  1 == scalar @reports;
+	$zip->extractMemberWithoutPaths($reports[0]);
+	open IN,"<","summary.txt" or die "Not text file called 'summary.txt' generated!!!!\t";
+	my %data;
+	while(<IN>){
+		chomp;
+		my @cols=split /\t/;
+		$data{$cols[1]}=$cols[0];
+	}
+	close IN;
+	die "Error " unless unlink "summary.txt";
+	return %data;
+}
+
+
